@@ -1,7 +1,5 @@
 /*
- * Copyright (C) 2013 The Android Open Source Project
- *
- * Copyright (C) 2015 NXP Semiconductors
+ * Copyright 2020 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +14,12 @@
  * limitations under the License.
  */
 
-package android.nfc.cardemulation;
+package com.nxp.ls.channel;
 
-parcelable NfcAidGroup;
+import java.io.IOException;
+
+public interface ISemsApduChannel {
+  byte[] open(byte[] aid) throws IOException;
+  byte[] transmit(byte[] buffer) throws IOException;
+  void close();
+}

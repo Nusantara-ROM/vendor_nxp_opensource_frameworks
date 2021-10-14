@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 NXP
+ * Copyright 2020 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nxp.sems.channel;
+package com.nxp.ls.channel;
 
 import android.content.Context;
 import android.se.omapi.*;
@@ -25,14 +25,13 @@ import java.util.TimerTask;
 import java.util.concurrent.TimeoutException;
 import android.se.omapi.SEService.OnConnectedListener;
 import android.util.Log;
-import com.nxp.sems.SemsException;
+import com.nxp.ls.SemsException;
 import android.os.Bundle;
 import java.util.NoSuchElementException;
 
 public class SemsOmapiApduChannel implements ISemsApduChannel {
   public static final String TAG = "SEMS-SemsApduChannel";
   private final long SERVICE_CONNECTION_TIME_OUT = 3000;
-  private static String ESE_TERMINAL_NAME = "eSE1";
   private Object serviceMutex = new Object();
   private boolean mFlagServiceMutex = false;
   private Timer connectionTimer;
@@ -44,9 +43,8 @@ public class SemsOmapiApduChannel implements ISemsApduChannel {
   private static Session sSession = null;
   private static Channel sChannel;
   private static Context sContext;
-  private Reader mReader = null;
+  private static byte meSEIdx;
   private static SemsOmapiApduChannel sOmapiChannel = null;
-  private BindToSEService bindService = null;
 
   /**
    * Returns SemsOmapiApduChannel singleton object
@@ -56,9 +54,9 @@ public class SemsOmapiApduChannel implements ISemsApduChannel {
    *
    * @return {@code SemsAgent}.
    */
-  public static SemsOmapiApduChannel getInstance(byte terminalID, Context context)
+  public static SemsOmapiApduChannel getInstance(byte eSEx, Context context)
       throws SemsException {
-    ESE_TERMINAL_NAME = "eSE" + String.valueOf(terminalID);
+    meSEIdx = eSEx;
     sContext = context;
     boolean initRequired = false;
     if (sOmapiChannel == null || seService == null || sSession == null
@@ -109,44 +107,36 @@ public class SemsOmapiApduChannel implements ISemsApduChannel {
   }
 
   private void bindSEService() {
-    connectionTimer = new Timer();
-    connectionTimer.schedule(mTimerTask, SERVICE_CONNECTION_TIME_OUT);
-    bindService = new BindToSEService();
+    BindToSEService bindService = new BindToSEService();
     bindService.start();
   }
 
   private void getSession() throws SemsException {
 
     waitForConnection();
-    while (seService == null &&
-           (bindService != null && bindService.isAlive())) {
+    if(seService == null){
+      Log.d(TAG, "SeService connection failed shall retry");
+      try{
+        new Thread().sleep(500);
+      } catch(Exception e) {
+        Log.d(TAG, "Thread interruption exception received");
+      }
+      synchronized (serviceMutex) {
+        mbIsConnected =  false;
+      }
+      bindSEService();
+      waitForConnection();
+    }
+    Reader[] readers = seService.getReaders();
+    if (readers.length > meSEIdx) {
       try {
-        Log.d(TAG, "Retry on SeService connection failure");
-        new Thread().sleep(SERVICE_CONNECTION_TIME_OUT/6);
+        sSession = readers[meSEIdx].openSession();
       } catch (Exception e) {
-        Log.d(TAG, "getSession Thread interruption exception received");
+        throw new SemsException(
+            "Exception during ApduChannel session intialization");
       }
-    }
-    if (seService == null) {
-      Log.d(TAG, "Unable to establish connection - exiting");
-      return;
-    }
-    try {
-      Reader[] readers = seService.getReaders();
-      for (Reader reader : readers) {
-        if (reader.getName().equals(ESE_TERMINAL_NAME)) {
-          mReader = reader;
-          break;
-        }
-      }
-      if (mReader == null)
-        throw new SemsException("Terminal not available");
-      sSession = mReader.openSession();
-      if (sSession == null)
-        throw new SemsException("Not available to intialize session");
-    } catch (Exception e) {
-      e.printStackTrace();
-      throw new SemsException(e.getMessage());
+    } else {
+      throw new SemsException("Terminal not available");
     }
   }
   /**
@@ -246,21 +236,10 @@ public class SemsOmapiApduChannel implements ISemsApduChannel {
 
   class BindToSEService extends Thread {
     public void run() {
-      int max_retry = 0;
-
-      do {
-        seService = new SEService(sContext, mExecutor, mListener);
-        if(seService == null) {
-          try {
-            new Thread().sleep(SERVICE_CONNECTION_TIME_OUT/6);
-            Log.d(TAG, "Bind to SE service fails" + max_retry);
-          } catch (Exception e) {
-            Log.d(TAG, "BindToSEService Thread interruption exception received");
-          }
-        }
-      } while (seService == null && (max_retry++ < 3));
-      if(seService != null)
-        Log.d(TAG, "Bind to SE service Success");
+      connectionTimer = new Timer();
+      connectionTimer.schedule(mTimerTask, SERVICE_CONNECTION_TIME_OUT);
+      seService = new SEService(sContext, mExecutor, mListener);
+      Log.d(TAG, "Bind to SE service");
     }
   }
 }
